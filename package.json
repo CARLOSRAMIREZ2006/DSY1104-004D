@@ -1,0 +1,12 @@
+{
+  "name": "prospin-webpay",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^5.3.0",
+    "transbank-sdk": "^6.1.1"
+  }
+}
