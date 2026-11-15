@@ -2,7 +2,7 @@
 // La sesión se guarda en sessionStorage: sobrevive a las recargas de la pestaña
 // y se borra al cerrarla. El token nunca se pide al usuario.
 const API_BASE = '/api/v1';
-const CLAVE_SESION = 'prospin_sesion';
+const CLAVE_SESION_API = 'prospin_sesion';
 
 function decodificarPayload(token) {
   try {
@@ -15,7 +15,7 @@ function decodificarPayload(token) {
 
 function guardarSesion(datos, email) {
   const payload = decodificarPayload(datos.token);
-  sessionStorage.setItem(CLAVE_SESION, JSON.stringify({
+  sessionStorage.setItem(CLAVE_SESION_API, JSON.stringify({
     token: datos.token,
     rol: datos.rol,
     email: email || (payload && payload.sub)
@@ -23,7 +23,7 @@ function guardarSesion(datos, email) {
 }
 
 function getSesion() {
-  const raw = sessionStorage.getItem(CLAVE_SESION);
+  const raw = sessionStorage.getItem(CLAVE_SESION_API);
   if (!raw) return null;
   try {
     const s = JSON.parse(raw);
@@ -41,7 +41,32 @@ function getSesion() {
 }
 
 function clearSesion() {
-  sessionStorage.removeItem(CLAVE_SESION);
+  sessionStorage.removeItem(CLAVE_SESION_API);
+}
+
+// Renueva el token cuando quedan menos de 10 minutos.
+// Devuelve false si la sesión ya no es válida (hay que volver al login).
+async function renovarSesionSiHaceFalta() {
+  const s = getSesion();
+  if (!s) return false;
+  const payload = decodificarPayload(s.token);
+  const segundosRestantes = payload.exp - Date.now() / 1000;
+  if (segundosRestantes > 600) return true;
+  try {
+    const r = await fetch(API_BASE + '/auth/refresh', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + s.token }
+    });
+    if (!r.ok) {
+      clearSesion();
+      return false;
+    }
+    guardarSesion(await r.json(), s.email);
+    return true;
+  } catch (e) {
+    // Sin conexión: se intenta de nuevo en el próximo ciclo
+    return true;
+  }
 }
 
 // Úsala al inicio de cada página protegida
@@ -64,7 +89,7 @@ function mensajeHttp(status) {
     case 401: return 'Tu sesión expiró. Vuelve a iniciar sesión.';
     case 403: return 'Tu rol no tiene permiso para esta acción.';
     case 404: return 'No se encontró el recurso solicitado.';
-    case 409: return 'No se pudo completar: stock insuficiente o dato duplicado.';
+    case 409: return 'No se pudo completar: stock insuficiente, dato duplicado o registro en uso.';
     default:  return 'Error del servidor (' + status + ').';
   }
 }

@@ -13,8 +13,145 @@
     </script>
     <link rel="stylesheet" href="style.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Isla de inicio de sesión: aparece sobre la página borrosa -->
+    <div id="loginIsla" role="dialog" aria-modal="true" aria-labelledby="islaTitulo">
+        <div class="isla-card">
+            <button type="button" class="isla-cerrar" id="islaCerrar" aria-label="Cerrar"><i class="fa-solid fa-xmark"></i></button>
+            <div class="isla-logo"><i class="fa-solid fa-table-tennis-paddle-ball"></i></div>
+            <h2 id="islaTitulo">Iniciar sesión</h2>
+            <p class="isla-sub" id="islaSub">Ingresa para ver la tienda y tus pedidos</p>
+            <form id="islaForm">
+                <div id="islaGrupoNombre" style="display: none;">
+                    <label for="islaNombre">Nombre</label>
+                    <input id="islaNombre" autocomplete="name">
+                </div>
+                <label for="islaEmail">Correo</label>
+                <input id="islaEmail" type="email" required autocomplete="username">
+                <label for="islaPassword">Contraseña</label>
+                <input id="islaPassword" type="password" minlength="8" required autocomplete="current-password">
+                <button id="islaEnviar" class="isla-btn" type="submit">Iniciar sesión</button>
+            </form>
+            <button type="button" id="islaAlternar" class="isla-alternar">¿No tienes cuenta? Crear cuenta</button>
+            <div id="islaAviso" class="isla-aviso"></div>
+        </div>
+    </div>
+
+    <script src="auth.js"></script>
+    <script>
+        /* Acceso: sin sesión se va al inicio de sesión; el rol define qué opciones se ven */
+        (function () {
+            var s = getSesion();
+            if (s) {
+                document.documentElement.classList.add('con-sesion', 'rol-' + s.rol.toLowerCase());
+            } else {
+                document.documentElement.classList.add('sin-sesion');
+            }
+        })();
+    </script>
+    <script>
+        (function () {
+            var isla = document.getElementById('loginIsla');
+            var registro = false;
+
+            function actualizarModo() {
+                document.getElementById('islaGrupoNombre').style.display = registro ? 'block' : 'none';
+                document.getElementById('islaNombre').required = registro;
+                document.getElementById('islaTitulo').textContent = registro ? 'Crear cuenta' : 'Iniciar sesión';
+                document.getElementById('islaSub').textContent = registro ? 'Crea tu cuenta para comprar en ProSpin' : 'Ingresa para ver la tienda y tus pedidos';
+                document.getElementById('islaEnviar').textContent = registro ? 'Crear cuenta' : 'Iniciar sesión';
+                document.getElementById('islaAlternar').textContent = registro ? '¿Ya tienes cuenta? Inicia sesión' : '¿No tienes cuenta? Crear cuenta';
+                document.getElementById('islaAviso').textContent = '';
+            }
+            function abrir(crearCuenta) { registro = !!crearCuenta; actualizarModo(); isla.classList.add('activa'); }
+            function cerrar() { isla.classList.remove('activa'); }
+
+            document.getElementById('islaAlternar').onclick = function () { registro = !registro; actualizarModo(); };
+            document.getElementById('islaCerrar').onclick = cerrar;
+            isla.addEventListener('click', function (e) { if (e.target === isla) cerrar(); });
+
+            document.getElementById('islaForm').onsubmit = async function (e) {
+                e.preventDefault();
+                var email = document.getElementById('islaEmail').value.trim();
+                var password = document.getElementById('islaPassword').value;
+                var nombre = document.getElementById('islaNombre').value.trim();
+                var boton = document.getElementById('islaEnviar');
+                var aviso = document.getElementById('islaAviso');
+                boton.disabled = true; aviso.className = 'isla-aviso'; aviso.textContent = 'Un momento...';
+                try {
+                    if (registro) {
+                        var r0 = await fetch(API_BASE + '/auth/registro', {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ nombre: nombre, email: email, password: password })
+                        });
+                        if (r0.status === 409) throw new Error('Ese correo ya está registrado.');
+                        if (!r0.ok) throw new Error('No se pudo crear la cuenta. Revisa los datos.');
+                        sessionStorage.setItem('prospin_nombre', nombre);
+                    }
+                    var r = await fetch(API_BASE + '/auth/login', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ email: email, password: password })
+                    });
+                    if (!r.ok) throw new Error('Correo o contraseña incorrectos.');
+                    guardarSesion(await r.json(), email);
+                    // Saltamos la portada y cargamos la tienda con la sesión activa
+                    sessionStorage.setItem('prospinBienvenida', '1');
+                    location.reload();
+                } catch (err) {
+                    aviso.className = 'isla-aviso error';
+                    aviso.textContent = err.message;
+                    boton.disabled = false;
+                }
+            };
+
+            // Sin sesión: "Ir a la tienda" y "Crear cuenta" abren la isla; con sesión, flujo normal
+            document.addEventListener('click', function (e) {
+                if (getSesion()) return;
+                var entrar = e.target.closest('#welcomeEnterBtn');
+                var cuenta = e.target.closest('#loginBtn');
+                if (entrar) { e.preventDefault(); e.stopImmediatePropagation(); abrir(false); }
+                else if (cuenta) { e.preventDefault(); e.stopImmediatePropagation(); abrir(true); }
+            }, true);
+        })();
+    </script>
     <script src="script.js" defer></script>
     <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/@emailjs/browser@3/dist/email.min.js"></script>
+    <style>
+        /* El vendedor solo consulta: no ve carrito ni botones de compra */
+        html.rol-vendedor #cartBtn,
+        html.rol-vendedor #floatingCartBtn,
+        html.rol-vendedor .btn-add-cart { display: none !important; }
+        /* Sin sesión, el catálogo no aparece: la portada se ve primero */
+        html.sin-sesion #catalogo,
+        html.sin-sesion #cartBtn,
+        html.sin-sesion #floatingCartBtn,
+        html.sin-sesion .sidebar { display: none !important; }
+
+        /* Isla de inicio de sesión sobre el fondo borroso */
+        #loginIsla { position: fixed; inset: 0; z-index: 10000; display: none; align-items: center; justify-content: center; padding: 20px; background: rgba(8, 15, 30, .42); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+        #loginIsla.activa { display: flex; animation: islaEntra .35s ease; }
+        @keyframes islaEntra { from { opacity: 0; transform: translateY(16px) scale(.97); } to { opacity: 1; transform: none; } }
+        .isla-card { position: relative; width: 100%; max-width: 420px; background: #ffffff; color: #0f172a; border-radius: 26px; padding: 36px 32px 28px; box-shadow: 0 34px 90px rgba(0, 0, 0, .38); overflow: hidden; }
+        .isla-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 6px; background: linear-gradient(90deg, #dc2626, #f97316); }
+        .isla-logo { width: 66px; height: 66px; margin: 0 auto 14px; border-radius: 20px; background: linear-gradient(135deg, #dc2626, #991b1b); display: flex; align-items: center; justify-content: center; color: #fff; font-size: 30px; box-shadow: 0 12px 26px rgba(220, 38, 38, .35); }
+        .isla-card h2 { margin: 0; text-align: center; font-size: 26px; font-family: 'Barlow Condensed', system-ui, sans-serif; letter-spacing: .3px; }
+        .isla-sub { text-align: center; color: #64748b; margin: 6px 0 20px; font-size: 14.5px; }
+        .isla-card label { display: block; font-size: 13px; font-weight: 600; margin: 14px 0 6px; color: #334155; }
+        .isla-card input { width: 100%; padding: 12px 14px; border: 1.5px solid #e2e8f0; border-radius: 12px; font-size: 15px; outline: none; background: #f8fafc; box-sizing: border-box; transition: border-color .2s, box-shadow .2s, background .2s; }
+        .isla-card input:focus { border-color: #dc2626; box-shadow: 0 0 0 4px rgba(220, 38, 38, .14); background: #fff; }
+        .isla-btn { width: 100%; margin-top: 22px; padding: 13px; border: 0; border-radius: 12px; background: linear-gradient(135deg, #dc2626, #b91c1c); color: #fff; font-weight: 700; font-size: 16px; cursor: pointer; box-shadow: 0 12px 24px rgba(220, 38, 38, .32); transition: transform .15s; }
+        .isla-btn:hover { transform: translateY(-1px); }
+        .isla-btn:disabled { opacity: .6; cursor: wait; }
+        .isla-alternar { display: block; margin: 18px auto 0; background: none; border: 0; color: #dc2626; font-weight: 600; cursor: pointer; }
+        .isla-cerrar { position: absolute; top: 16px; right: 16px; width: 34px; height: 34px; border: 0; border-radius: 50%; background: #f1f5f9; color: #475569; cursor: pointer; }
+        .isla-aviso { margin-top: 14px; font-size: 14px; min-height: 18px; text-align: center; }
+        .isla-aviso.error { color: #b91c1c; }
+        .isla-aviso.ok { color: #15803d; }
+        /* Aviso pequeño para entrar a la tienda */
+        .alerta-sesion-caja { max-width: 380px; text-align: center; }
+        .alerta-sesion-caja h3 { margin: 6px 0 8px; }
+        .alerta-sesion-caja p { opacity: .8; margin: 0 0 18px; }
+        .alerta-sesion-botones { display: flex; flex-direction: column; gap: 10px; }
+    </style>
 </head>
 <body>
 

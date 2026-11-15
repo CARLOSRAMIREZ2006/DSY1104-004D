@@ -1,6 +1,6 @@
 document.addEventListener('DOMContentLoaded', () => {
 
-    const totalProductos = [
+    let totalProductos = [
         {
             "id": "TT-001",
             "category": "accesorios-pelotas",
@@ -1338,6 +1338,30 @@ document.addEventListener('DOMContentLoaded', () => {
                 btnSubmit.disabled = true;
             }
 
+            // Con sesión, la compra se registra en la API (reemplaza el pago con Webpay)
+            if (getSesion()) {
+                try {
+                    const items = cart.map(p => ({
+                        productoId: (totalProductos.find(x => x.id === p.id) || {}).dbId,
+                        cantidad: p.quantity
+                    }));
+                    const boleta = await apiFetch('/boletas', { method: 'POST', body: JSON.stringify({ items: items }) });
+                    cart.splice(0, cart.length);
+                    localStorage.removeItem('cartProSpin');
+                    updateCart();
+                    mostrarResultadoPago({
+                        tipo: 'ok',
+                        titulo: 'Compra realizada',
+                        mensaje: 'Boleta N° ' + boleta.id + ' por $' + Number(boleta.total).toLocaleString('es-CL') + '. Puedes revisarla en Pedidos.'
+                    });
+                } catch (error) {
+                    mostrarResultadoPago({ tipo: 'error', titulo: 'No se pudo completar la compra', mensaje: error.message });
+                } finally {
+                    if (btnSubmit) { btnSubmit.textContent = textoBoton; btnSubmit.disabled = false; }
+                }
+                return;
+            }
+
             const numeroPedido = generarNumeroPedido();
             const datos = {
                 nombre: valorCampo('chkName'),
@@ -1636,7 +1660,7 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (e) {}
         return null;
     }
-    currentUser = cargarSesionGuardada();
+    currentUser = usuarioDesdeApi() || cargarSesionGuardada();
 
     const emailInput = document.getElementById('email');
     const errorEmail = document.getElementById('errorEmail');
@@ -1899,7 +1923,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (confirmLogoutBtn) {
         confirmLogoutBtn.addEventListener('click', () => {
-            currentUser = null; 
+            currentUser = null; clearSesion(); sessionStorage.removeItem('prospin_nombre'); setTimeout(() => location.replace('login.html'), 800); 
             actualizarEstadoSesion(); 
             toggleProfileDrawer(false); 
             showToast('Sesión cerrada correctamente');
@@ -2153,6 +2177,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // ---------- Pestaña Pedidos ----------
     function renderPedidos() {
         if (!ordersView) return;
+        if (getSesion()) { renderBoletasApi(); return; }
         ordersView.textContent = '';
         const lista = pedidosDelUsuario();
         if (lista.length === 0) {
@@ -2380,8 +2405,56 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // ---- Integración con la API de ProSpin ----
+    function usuarioDesdeApi() {
+        const sesion = getSesion();
+        if (!sesion) return null;
+        const nombre = sessionStorage.getItem('prospin_nombre') || sesion.email.split('@')[0];
+        return { nombre: nombre, email: sesion.email, estilo: 'particular' };
+    }
+
+    // Mantiene el diseño y los filtros; precio, stock, nombre e imagen vienen de la base de datos
+    async function cargarCatalogoDesdeApi() {
+        try {
+            const lista = await apiFetch('/productos');
+            const porCodigo = new Map(lista.map(p => [p.codigo, p]));
+            totalProductos = totalProductos
+                .filter(p => porCodigo.has(p.id))
+                .map(p => {
+                    const a = porCodigo.get(p.id);
+                    return Object.assign({}, p, {
+                        dbId: a.id, name: a.nombre, price: a.precio, stock: a.stock, img: a.imagen || p.img
+                    });
+                });
+        } catch (e) {
+            console.error('Catálogo: ' + e.message);
+        }
+    }
+
+    async function renderBoletasApi() {
+        ordersView.textContent = '';
+        try {
+            const lista = await apiFetch('/boletas');
+            if (!lista.length) {
+                ordersView.appendChild(crear('p', 'profile-empty', 'Aún no hay pedidos.'));
+                return;
+            }
+            lista.forEach(b => {
+                const tarjeta = crear('article', 'order-card');
+                const cabecera = crear('div', 'order-head');
+                cabecera.appendChild(crear('strong', '', 'Boleta N° ' + b.id));
+                cabecera.appendChild(crear('span', '', new Date(b.fecha).toLocaleDateString('es-CL') + ' · $' + Number(b.total).toLocaleString('es-CL')));
+                tarjeta.appendChild(cabecera);
+                b.detalles.forEach(d => tarjeta.appendChild(crear('p', '', d.producto.nombre + ' × ' + d.cantidad)));
+                ordersView.appendChild(tarjeta);
+            });
+        } catch (e) {
+            ordersView.appendChild(crear('p', 'profile-empty', e.message));
+        }
+    }
+
     // INICIALIZACIÓN
-    renderProducts(totalProductos);
+    cargarCatalogoDesdeApi().then(() => renderProducts(totalProductos));
     manejarRetornoWebpay(); // si el cliente vuelve desde Webpay, completa o informa el pedido
     updateCart();
 
