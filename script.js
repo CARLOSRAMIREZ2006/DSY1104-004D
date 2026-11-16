@@ -1338,28 +1338,28 @@ document.addEventListener('DOMContentLoaded', () => {
                 btnSubmit.disabled = true;
             }
 
-            // Con sesión, la compra se registra en la API (reemplaza el pago con Webpay)
+            // Con sesión, el pago se hace con Webpay; el total lo calcula la API desde la base de datos
             if (getSesion()) {
                 try {
                     const items = cart.map(p => ({
                         productoId: (totalProductos.find(x => x.id === p.id) || {}).dbId,
                         cantidad: p.quantity
                     }));
-                    const boleta = await apiFetch('/boletas', { method: 'POST', body: JSON.stringify({ items: items }) });
-                    cart.splice(0, cart.length);
-                    localStorage.removeItem('cartProSpin');
-                    updateCart();
-                    mostrarResultadoPago({
-                        tipo: 'ok',
-                        titulo: 'Compra realizada',
-                        mensaje: 'Boleta N° ' + boleta.id + ' por $' + Number(boleta.total).toLocaleString('es-CL') + '. Puedes revisarla en Pedidos.'
-                    });
+                    const pago = await apiFetch('/pagos/iniciar', { method: 'POST', body: JSON.stringify({ items: items }) });
+                    const f = document.createElement('form');
+                    f.method = 'POST';
+                    f.action = pago.url;
+                    const campo = document.createElement('input');
+                    campo.type = 'hidden'; campo.name = 'token_ws'; campo.value = pago.token;
+                    f.appendChild(campo);
+                    document.body.appendChild(f);
+                    f.submit();
+                    return;
                 } catch (error) {
-                    mostrarResultadoPago({ tipo: 'error', titulo: 'No se pudo completar la compra', mensaje: error.message });
-                } finally {
+                    mostrarResultadoPago({ tipo: 'error', titulo: 'No se pudo iniciar el pago', mensaje: error.message });
                     if (btnSubmit) { btnSubmit.textContent = textoBoton; btnSubmit.disabled = false; }
+                    return;
                 }
-                return;
             }
 
             const numeroPedido = generarNumeroPedido();
@@ -2405,6 +2405,27 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // Resultado del pago al volver desde Webpay (la API redirige con ?pago=...&boleta=...)
+    function manejarRetornoApi() {
+        const p = new URLSearchParams(location.search);
+        const pago = p.get('pago');
+        if (!pago) return;
+        const boleta = p.get('boleta') || '';
+        history.replaceState(null, '', location.pathname);
+        if (pago === 'ok') {
+            cart.splice(0, cart.length);
+            localStorage.removeItem('cartProSpin');
+            updateCart();
+            mostrarResultadoPago({ tipo: 'ok', titulo: 'Pago aprobado', mensaje: 'Tu compra fue pagada con Webpay. Boleta N° ' + boleta + '. Puedes revisarla en Pedidos.' });
+        } else if (pago === 'rechazado') {
+            mostrarResultadoPago({ tipo: 'error', titulo: 'Pago rechazado', mensaje: 'Webpay no aprobó el pago. Tu carrito se mantiene para intentarlo otra vez.' });
+        } else if (pago === 'cancelado') {
+            mostrarResultadoPago({ tipo: 'warning', titulo: 'Pago cancelado', mensaje: 'Cancelaste el pago en Webpay. Tu carrito se mantiene.' });
+        } else {
+            mostrarResultadoPago({ tipo: 'error', titulo: 'No se pudo completar el pago', mensaje: 'Intenta nuevamente desde tu carrito.' });
+        }
+    }
+
     // ---- Integración con la API de ProSpin ----
     function usuarioDesdeApi() {
         const sesion = getSesion();
@@ -2443,7 +2464,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const tarjeta = crear('article', 'order-card');
                 const cabecera = crear('div', 'order-head');
                 cabecera.appendChild(crear('strong', '', 'Boleta N° ' + b.id));
-                cabecera.appendChild(crear('span', '', new Date(b.fecha).toLocaleDateString('es-CL') + ' · $' + Number(b.total).toLocaleString('es-CL')));
+                cabecera.appendChild(crear('span', '', new Date(b.fecha).toLocaleDateString('es-CL') + ' · $' + Number(b.total).toLocaleString('es-CL') + ' · ' + b.estado));
                 tarjeta.appendChild(cabecera);
                 b.detalles.forEach(d => tarjeta.appendChild(crear('p', '', d.producto.nombre + ' × ' + d.cantidad)));
                 ordersView.appendChild(tarjeta);
@@ -2455,7 +2476,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // INICIALIZACIÓN
     cargarCatalogoDesdeApi().then(() => renderProducts(totalProductos));
-    manejarRetornoWebpay(); // si el cliente vuelve desde Webpay, completa o informa el pedido
+    manejarRetornoApi(); // al volver desde Webpay, muestra el resultado
     updateCart();
 
 }); 
